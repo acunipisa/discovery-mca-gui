@@ -1,6 +1,5 @@
 from ctypes import *
 import time
-from dataclasses import dataclass
 from threading import Event
 
 from app.models import ScopeConfig, ScopeCaptureResult
@@ -29,8 +28,11 @@ class ScopeManager:
         self.config: ScopeConfig | None = None
         self.is_configured = False
 
-        # Cooperative cancellation for blocking trigger wait
         self._cancel_wait_event = Event()
+
+        # Internal run state
+        self._acquisition_running = False
+        self._mode = "idle"  # "idle" | "manual" | "mca"
 
     def _check(self, ok, func_name: str):
         if ok:
@@ -44,6 +46,14 @@ class ScopeManager:
 
     def clear_cancel_wait(self):
         self._cancel_wait_event.clear()
+
+    def reset_state(self):
+        self.clear_cancel_wait()
+        try:
+            self.dwf.FDwfAnalogInConfigure(self.hdwf, c_bool(False), c_bool(False))
+        finally:
+            self._acquisition_running = False
+            self._mode = "idle"
 
     def configure_single_trigger(
         self,
@@ -83,7 +93,7 @@ class ScopeManager:
                 f"{expected_pretrigger}, got {pretrigger_samples}."
             )
 
-        self.clear_cancel_wait()
+        self.reset_state()
 
         self._check(
             self.dwf.FDwfAnalogInConfigure(self.hdwf, c_bool(False), c_bool(False)),
@@ -195,18 +205,47 @@ class ScopeManager:
 
         self.is_configured = True
 
-    def arm(self):
+    def start_manual_wait(self):
+        if not self.is_configured:
+            raise RuntimeError("Scope not configured")
+
+        self.reset_state()
         self.clear_cancel_wait()
+
         self._check(
             self.dwf.FDwfAnalogInConfigure(self.hdwf, c_bool(False), c_bool(True)),
-            "FDwfAnalogInConfigure(start)",
+            "FDwfAnalogInConfigure(start-manual)",
         )
+        self._acquisition_running = True
+        self._mode = "manual"
+
+    def start_mca_repeated(self):
+        if not self.is_configured:
+            raise RuntimeError("Scope not configured")
+
+        self.reset_state()
+        self.clear_cancel_wait()
+
+        self._check(
+            self.dwf.FDwfAnalogInConfigure(self.hdwf, c_bool(False), c_bool(True)),
+            "FDwfAnalogInConfigure(start-mca)",
+        )
+        self._acquisition_running = True
+        self._mode = "mca"
+
+    def arm(self):
+        self.start_manual_wait()
 
     def stop(self):
-        self._check(
-            self.dwf.FDwfAnalogInConfigure(self.hdwf, c_bool(False), c_bool(False)),
-            "FDwfAnalogInConfigure(stop)",
-        )
+        self.clear_cancel_wait()
+        try:
+            self._check(
+                self.dwf.FDwfAnalogInConfigure(self.hdwf, c_bool(False), c_bool(False)),
+                "FDwfAnalogInConfigure(stop)",
+            )
+        finally:
+            self._acquisition_running = False
+            self._mode = "idle"
 
     def wait_for_trigger_and_read(
         self, channel: int = 0, buffer_size: int = 512
@@ -214,37 +253,24 @@ class ScopeManager:
         channel = int(channel)
         buffer_size = int(buffer_size)
 
+        if not self._acquisition_running:
+            raise RuntimeError("Scope acquisition not started.")
+
         sts = c_byte()
 
         try:
             while True:
                 if self._cancel_wait_event.is_set():
-                    self._check(
-                        self.dwf.FDwfAnalogInConfigure(
-                            self.hdwf, c_bool(False), c_bool(False)
-                        ),
-                        "FDwfAnalogInConfigure(cancel-stop)",
-                    )
                     raise ScopeWaitCancelled("Capture waiting cancelled by user.")
 
                 self._check(
                     self.dwf.FDwfAnalogInStatus(self.hdwf, c_int(1), byref(sts)),
                     "FDwfAnalogInStatus",
                 )
+
                 if sts.value == _ct_val(DwfStateDone):
                     t_trigger_done = time.perf_counter()
                     break
-
-                # time.sleep(0.00001)
-
-            if self._cancel_wait_event.is_set():
-                self._check(
-                    self.dwf.FDwfAnalogInConfigure(
-                        self.hdwf, c_bool(False), c_bool(False)
-                    ),
-                    "FDwfAnalogInConfigure(cancel-stop-after-done)",
-                )
-                raise ScopeWaitCancelled("Capture waiting cancelled by user.")
 
             data = (c_double * buffer_size)()
             self._check(

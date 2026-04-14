@@ -7,6 +7,29 @@ import numpy as np
 
 from app.models import MCAConfig
 from hardware.scope_manager import ScopeWaitCancelled
+import ctypes
+from ctypes import wintypes
+
+
+def _set_current_thread_high_priority():
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    THREAD_PRIORITY_HIGHEST = 2
+
+    kernel32.GetCurrentThread.restype = wintypes.HANDLE
+    kernel32.GetCurrentThread.argtypes = []
+
+    kernel32.SetThreadPriority.restype = wintypes.BOOL
+    kernel32.SetThreadPriority.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+    ]
+
+    hthread = kernel32.GetCurrentThread()
+
+    ok = kernel32.SetThreadPriority(hthread, THREAD_PRIORITY_HIGHEST)
+    if not ok:
+        raise ctypes.WinError(ctypes.get_last_error())
 
 
 @dataclass
@@ -50,21 +73,28 @@ class MCAManager:
         self.last_status_overflow_delta = 0
         self.last_status_underflow_delta = 0
 
-        # dead time = estimated real trigger instant -> next scope.arm()
         self.total_dead_time_s = 0.0
         self.last_dead_time_s = 0.0
         self.last_status_dead_time_delta_s = 0.0
         self.last_status_dead_time_percent = 0.0
-        self._last_trigger_time_estimate = None
 
-        self._processing_queue = Queue(maxsize=64)
+        self._processing_queue = Queue(maxsize=256)
         self._processing_thread: Thread | None = None
         self._dropped_buffers = 0
 
-        # Diagnostics counters
         self.arm_count = 0
         self.triggered_read_count = 0
         self.processed_count = 0
+
+        self._status_callback = None
+        self._status_period_s = 1.0
+        self._last_status_clock = 0.0
+        self._prev_event_count = 0
+        self._prev_accepted_count = 0
+        self._prev_rejected_count = 0
+        self._prev_overflow_count = 0
+        self._prev_underflow_count = 0
+        self._prev_total_dead_time_s = 0.0
 
     def clear(self):
         self.spectrum = None
@@ -96,15 +126,24 @@ class MCAManager:
         self.last_dead_time_s = 0.0
         self.last_status_dead_time_delta_s = 0.0
         self.last_status_dead_time_percent = 0.0
-        self._last_trigger_time_estimate = None
 
-        self._processing_queue = Queue(maxsize=64)
+        self._processing_queue = Queue(maxsize=256)
         self._processing_thread = None
         self._dropped_buffers = 0
 
         self.arm_count = 0
         self.triggered_read_count = 0
         self.processed_count = 0
+
+        self._status_callback = None
+        self._status_period_s = 1.0
+        self._last_status_clock = 0.0
+        self._prev_event_count = 0
+        self._prev_accepted_count = 0
+        self._prev_rejected_count = 0
+        self._prev_overflow_count = 0
+        self._prev_underflow_count = 0
+        self._prev_total_dead_time_s = 0.0
 
     def amplitude_to_bin(self, amplitude: float) -> int | None:
         vmin = self.config.voltage_min
@@ -173,42 +212,6 @@ class MCAManager:
         self.processed_count += 1
         return self.process_event(scope_result)
 
-    def _processing_loop(self, scope):
-        while self.running or (not self._processing_queue.empty()):
-            try:
-                item = self._processing_queue.get(timeout=0.05)
-            except Empty:
-                continue
-
-            if item is None:
-                self._processing_queue.task_done()
-                break
-
-            samples = item
-
-            try:
-                self._process_samples(scope, samples)
-            finally:
-                self._processing_queue.task_done()
-
-    def _start_processing_thread(self, scope):
-        self._processing_thread = Thread(
-            target=self._processing_loop,
-            args=(scope,),
-            daemon=True,
-        )
-        self._processing_thread.start()
-
-    def _stop_processing_thread(self):
-        try:
-            self._processing_queue.put_nowait(None)
-        except Full:
-            pass
-
-        if self._processing_thread is not None:
-            self._processing_thread.join(timeout=2.0)
-            self._processing_thread = None
-
     def _estimate_trigger_time_from_capture(
         self,
         scope,
@@ -264,6 +267,100 @@ class MCAManager:
             else 0.0
         )
 
+    def _maybe_emit_status(self):
+        now_clock = time.monotonic()
+        interval_s = now_clock - self._last_status_clock
+
+        if interval_s < self._status_period_s:
+            return
+
+        self._store_status_deltas(
+            interval_s=interval_s,
+            prev_event_count=self._prev_event_count,
+            prev_accepted_count=self._prev_accepted_count,
+            prev_rejected_count=self._prev_rejected_count,
+            prev_overflow_count=self._prev_overflow_count,
+            prev_underflow_count=self._prev_underflow_count,
+            prev_total_dead_time_s=self._prev_total_dead_time_s,
+        )
+
+        self._last_status_clock = now_clock
+        self._prev_event_count = self.event_count
+        self._prev_accepted_count = self.accepted_count
+        self._prev_rejected_count = self.rejected_count
+        self._prev_overflow_count = self.overflow_count
+        self._prev_underflow_count = self.underflow_count
+        self._prev_total_dead_time_s = self.total_dead_time_s
+
+        if self._status_callback is not None:
+            self._status_callback(self, self.last_result)
+
+    def _emit_final_status_if_needed(self):
+        if self.event_count == self._prev_event_count:
+            return
+
+        final_interval_s = time.monotonic() - self._last_status_clock
+        if final_interval_s <= 0:
+            return
+
+        self._store_status_deltas(
+            interval_s=final_interval_s,
+            prev_event_count=self._prev_event_count,
+            prev_accepted_count=self._prev_accepted_count,
+            prev_rejected_count=self._prev_rejected_count,
+            prev_overflow_count=self._prev_overflow_count,
+            prev_underflow_count=self._prev_underflow_count,
+            prev_total_dead_time_s=self._prev_total_dead_time_s,
+        )
+
+        if self._status_callback is not None:
+            self._status_callback(self, self.last_result)
+
+    def _processing_loop(self, scope):
+        while True:
+            try:
+                item = self._processing_queue.get(timeout=0.05)
+            except Empty:
+                continue
+
+            if item is None:
+                self._processing_queue.task_done()
+                break
+
+            samples, trigger_done_time, t_read_done = item
+
+            try:
+                trigger_time_est = self._estimate_trigger_time_from_capture(
+                    scope,
+                    samples,
+                    trigger_done_time,
+                )
+
+                dead_time_s = t_read_done - trigger_time_est
+                if dead_time_s < 0:
+                    dead_time_s = 0.0
+
+                self.last_dead_time_s = dead_time_s
+                self.total_dead_time_s += dead_time_s
+
+                self._process_samples(scope, samples)
+                self._maybe_emit_status()
+            finally:
+                self._processing_queue.task_done()
+
+    def _start_processing_thread(self, scope):
+        self._processing_thread = Thread(
+            target=self._processing_loop,
+            args=(scope,),
+            daemon=True,
+        )
+        self._processing_thread.start()
+
+    def _stop_processing_thread(self):
+        if self._processing_thread is not None:
+            self._processing_thread.join(timeout=2.0)
+            self._processing_thread = None
+
     def run_forever(
         self,
         scope,
@@ -278,40 +375,37 @@ class MCAManager:
         if status_period_s <= 0:
             raise ValueError("status_period_s must be > 0.")
 
-        last_status_clock = time.monotonic()
-        prev_event_count = self.event_count
-        prev_accepted_count = self.accepted_count
-        prev_rejected_count = self.rejected_count
-        prev_overflow_count = self.overflow_count
-        prev_underflow_count = self.underflow_count
-        prev_total_dead_time_s = self.total_dead_time_s
+        cfg = scope.config
+        if cfg is None:
+            raise RuntimeError("Scope not configured.")
+
+        try:
+            _set_current_thread_high_priority()
+        except OSError as e:
+            print(f"Warning: could not raise MCA thread priority: {e}")
+
+        self._status_callback = status_callback
+        self._status_period_s = status_period_s
+        self._last_status_clock = time.monotonic()
+        self._prev_event_count = self.event_count
+        self._prev_accepted_count = self.accepted_count
+        self._prev_rejected_count = self.rejected_count
+        self._prev_overflow_count = self.overflow_count
+        self._prev_underflow_count = self.underflow_count
+        self._prev_total_dead_time_s = self.total_dead_time_s
 
         self._start_processing_thread(scope)
 
         try:
+            scope.start_mca_repeated()
+            self.arm_count += 1
+
             while self.running:
                 if duration_s is not None:
                     elapsed_this_run = time.time() - self.run_start_time
                     if elapsed_this_run >= duration_s:
                         self.stop()
                         break
-
-                if self._last_trigger_time_estimate is not None:
-                    t_next_arm = time.perf_counter()
-                    event_dead_time_s = t_next_arm - self._last_trigger_time_estimate
-                    if event_dead_time_s < 0:
-                        event_dead_time_s = 0.0
-
-                    self.last_dead_time_s = event_dead_time_s
-                    self.total_dead_time_s += event_dead_time_s
-                    self._last_trigger_time_estimate = None
-
-                cfg = scope.config
-                if cfg is None:
-                    raise RuntimeError("Scope not configured.")
-
-                scope.arm()
-                self.arm_count += 1
 
                 try:
                     samples, trigger_done_time = scope.wait_for_trigger_and_read(
@@ -324,62 +418,14 @@ class MCAManager:
                     raise
 
                 self.triggered_read_count += 1
-
-                self._last_trigger_time_estimate = (
-                    self._estimate_trigger_time_from_capture(
-                        scope,
-                        samples,
-                        trigger_done_time,
-                    )
-                )
+                t_read_done = time.perf_counter()
 
                 try:
-                    self._processing_queue.put_nowait(samples)
+                    self._processing_queue.put_nowait(
+                        (samples, trigger_done_time, t_read_done)
+                    )
                 except Full:
                     self._dropped_buffers += 1
-
-                now_clock = time.monotonic()
-                interval_s = now_clock - last_status_clock
-
-                if interval_s >= status_period_s:
-                    self._store_status_deltas(
-                        interval_s=interval_s,
-                        prev_event_count=prev_event_count,
-                        prev_accepted_count=prev_accepted_count,
-                        prev_rejected_count=prev_rejected_count,
-                        prev_overflow_count=prev_overflow_count,
-                        prev_underflow_count=prev_underflow_count,
-                        prev_total_dead_time_s=prev_total_dead_time_s,
-                    )
-
-                    last_status_clock = now_clock
-                    prev_event_count = self.event_count
-                    prev_accepted_count = self.accepted_count
-                    prev_rejected_count = self.rejected_count
-                    prev_overflow_count = self.overflow_count
-                    prev_underflow_count = self.underflow_count
-                    prev_total_dead_time_s = self.total_dead_time_s
-
-                    if status_callback is not None:
-                        status_callback(self, self.last_result)
-
-            self._processing_queue.join()
-
-            if self.event_count != prev_event_count:
-                final_interval_s = time.monotonic() - last_status_clock
-                if final_interval_s > 0:
-                    self._store_status_deltas(
-                        interval_s=final_interval_s,
-                        prev_event_count=prev_event_count,
-                        prev_accepted_count=prev_accepted_count,
-                        prev_rejected_count=prev_rejected_count,
-                        prev_overflow_count=prev_overflow_count,
-                        prev_underflow_count=prev_underflow_count,
-                        prev_total_dead_time_s=prev_total_dead_time_s,
-                    )
-
-                    if status_callback is not None:
-                        status_callback(self, self.last_result)
 
         except KeyboardInterrupt:
             self.stop()
@@ -387,7 +433,14 @@ class MCAManager:
         finally:
             self.running = False
             self.run_start_time = None
-            self._stop_processing_thread()
+
+            try:
+                scope.stop()
+            finally:
+                self._processing_queue.put(None)
+                self._processing_queue.join()
+                self._emit_final_status_if_needed()
+                self._stop_processing_thread()
 
     def stop(self):
         if self.running and self.run_start_time is not None:

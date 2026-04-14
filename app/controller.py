@@ -62,10 +62,18 @@ class DiscoveryMCAController:
     def close(self):
         if self.device.is_open:
             try:
+                self.stop_mca()
+            except Exception:
+                pass
+
+            try:
+                if self.scope is not None:
+                    self.scope.reset_state()
                 if self.power is not None:
                     self.power.disable_all_supplies()
             except Exception:
                 pass
+
             self.device.close()
 
         self.power = None
@@ -103,10 +111,6 @@ class DiscoveryMCAController:
             raise RuntimeError("Test pulse manager not initialized")
         return self.test_pulse
 
-    # =========================
-    # POWER
-    # =========================
-
     def read_supply_status(self) -> dict:
         return self._require_power().read_supply_status()
 
@@ -129,10 +133,6 @@ class DiscoveryMCAController:
     def disable_all_supplies(self):
         self._require_power().disable_all_supplies()
 
-    # =========================
-    # SCOPE
-    # =========================
-
     def configure_scope(
         self,
         trigger_level_v: float = 0.2,
@@ -147,6 +147,9 @@ class DiscoveryMCAController:
         holdoff_s: float = HOLDOFF_S,
     ) -> ScopeSetupSummary:
         scope = self._require_scope()
+
+        if self.mca.running:
+            raise RuntimeError("Cannot reconfigure scope while MCA is running.")
 
         scope.configure_single_trigger(
             channel=channel,
@@ -192,10 +195,14 @@ class DiscoveryMCAController:
 
     def arm_scope(self):
         self.ensure_scope_configured()
-        self._require_scope().arm()
+        if self.mca.running:
+            raise RuntimeError("Cannot manually arm scope while MCA is running.")
+        self._require_scope().start_manual_wait()
 
     def stop_scope(self):
         self.ensure_scope_configured()
+        if self.mca.running:
+            raise RuntimeError("Use Stop MCA while MCA is running.")
         self._require_scope().stop()
 
     def cancel_capture_waiting(self):
@@ -204,36 +211,36 @@ class DiscoveryMCAController:
 
     def capture_once(self) -> ScopeCaptureResult:
         self.ensure_scope_configured()
+        if self.mca.running:
+            raise RuntimeError("Cannot capture once while MCA is running.")
+
         scope = self._require_scope()
         cfg = scope.config
         if cfg is None:
             raise RuntimeError("Scope not configured.")
 
-        scope.clear_cancel_wait()
-        scope.arm()
+        scope.start_manual_wait()
 
-        samples, _ = scope.wait_for_trigger_and_read(
-            channel=cfg.channel,
-            buffer_size=cfg.buffer_size,
-        )
+        try:
+            samples, _ = scope.wait_for_trigger_and_read(
+                channel=cfg.channel,
+                buffer_size=cfg.buffer_size,
+            )
 
-        scope_result = scope.process_buffer(
-            samples=samples,
-            sample_rate_hz=cfg.sample_rate_hz,
-            trigger_index_estimate=cfg.pretrigger_samples,
-            baseline_width=BASELINE_WIDTH,
-            baseline_center_offset=BASELINE_CENTER_OFFSET,
-            pulse_polarity_positive=cfg.pulse_polarity_positive,
-        )
+            scope_result = scope.process_buffer(
+                samples=samples,
+                sample_rate_hz=cfg.sample_rate_hz,
+                trigger_index_estimate=cfg.pretrigger_samples,
+                baseline_width=BASELINE_WIDTH,
+                baseline_center_offset=BASELINE_CENTER_OFFSET,
+                pulse_polarity_positive=cfg.pulse_polarity_positive,
+            )
 
-        self.mca.last_buffer = samples.copy()
-        self.mca.last_scope_result = scope_result
-
-        return scope_result
-
-    # =========================
-    # HV
-    # =========================
+            self.mca.last_buffer = samples.copy()
+            self.mca.last_scope_result = scope_result
+            return scope_result
+        finally:
+            scope.stop()
 
     def set_hv_voltage(self, voltage_v: float, channel: int = HV_CHANNEL) -> float:
         hv = self._require_hv()
@@ -245,10 +252,6 @@ class DiscoveryMCAController:
 
     def get_hv_voltage(self, channel: int = HV_CHANNEL) -> float:
         return self._require_hv().get_voltage(channel=channel)
-
-    # =========================
-    # MCA
-    # =========================
 
     def configure_mca(
         self,
@@ -307,7 +310,11 @@ class DiscoveryMCAController:
         self.ensure_mca_configured()
         scope = self._require_scope()
 
+        if self.mca.running:
+            raise RuntimeError("MCA is already running.")
+
         try:
+            scope.reset_state()
             self.state = AppState.MCA_RUNNING
             self.mca.run_forever(
                 scope,
@@ -322,7 +329,6 @@ class DiscoveryMCAController:
 
     def stop_mca(self):
         self.mca.stop()
-
         if self.scope_configured and self.scope is not None:
             try:
                 self.scope.request_cancel_wait()
@@ -330,6 +336,8 @@ class DiscoveryMCAController:
                 pass
 
     def clear_mca(self):
+        if self.mca.running:
+            raise RuntimeError("Cannot clear MCA while it is running.")
         self.mca.clear()
 
     def mca_summary(self) -> dict:
@@ -346,33 +354,6 @@ class DiscoveryMCAController:
 
     def plot_last_buffer(self):
         plot_last_buffer(self.mca.last_buffer, self.mca.last_scope_result)
-
-    # =========================
-    # TEST PULSE
-    # =========================
-
-    def start_test_pulse_ramp(
-        self,
-        frequency_hz: float = 100.0,
-        amplitude_v: float = 1.0,
-        offset_v: float = -1.0,
-        symmetry_percent: float = 100.0,
-        phase_deg: float = 0.0,
-    ):
-        self._require_test_pulse().start_ramp_up(
-            frequency_hz=frequency_hz,
-            amplitude_v=amplitude_v,
-            offset_v=offset_v,
-            symmetry_percent=symmetry_percent,
-            phase_deg=phase_deg,
-        )
-
-    def stop_test_pulse(self, force_zero: bool = False):
-        self._require_test_pulse().stop(force_zero=force_zero)
-
-    # =========================
-    # STATUS
-    # =========================
 
     def get_state(self) -> AppState:
         return self.state
@@ -403,6 +384,25 @@ class DiscoveryMCAController:
             has_hv_manager=self.hv is not None,
             has_test_pulse_manager=self.test_pulse is not None,
         )
+
+    def start_test_pulse_ramp(
+        self,
+        frequency_hz: float = 100.0,
+        amplitude_v: float = 1.0,
+        offset_v: float = -1.0,
+        symmetry_percent: float = 100.0,
+        phase_deg: float = 0.0,
+    ):
+        self._require_test_pulse().start_ramp_up(
+            frequency_hz=frequency_hz,
+            amplitude_v=amplitude_v,
+            offset_v=offset_v,
+            symmetry_percent=symmetry_percent,
+            phase_deg=phase_deg,
+        )
+
+    def stop_test_pulse(self, force_zero: bool = False):
+        self._require_test_pulse().stop(force_zero=force_zero)
 
     def start_test_pulse(
         self,
