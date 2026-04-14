@@ -438,3 +438,23 @@ class DiscoveryMCAController:
             return
 
         raise ValueError(f"Unsupported test pulse mode: {mode}")
+
+    def get_mca_export_data(self) -> dict:
+        cfg = self.get_mca_config()
+
+        return {
+            "config": (
+                None
+                if cfg is None
+                else {
+                    "n_channels": cfg.n_channels,
+                    "voltage_min": cfg.voltage_min,
+                    "voltage_max": cfg.voltage_max,
+                    "baseline_width": cfg.baseline_width,
+                    "baseline_center_offset": cfg.baseline_center_offset,
+                    "trigger_index_estimate": cfg.trigger_index_estimate,
+                }
+            ),
+            "summary": self.mca_summary(),
+            "spectrum": None if self.mca.spectrum is None else self.mca.spectrum.copy(),
+        }

@@ -1,5 +1,6 @@
 from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
+    QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -8,6 +9,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QGroupBox,
+    QSizePolicy,
 )
 
 from frontends.gui.widgets.collapsible_group_box import CollapsibleGroupBox
@@ -56,6 +58,7 @@ class MCAGroup(CollapsibleGroupBox):
         self.start_btn = None
         self.stop_btn = None
         self.clear_btn = None
+        self.export_btn = None
 
         self.status_label = None
         self.summary_label = None
@@ -81,7 +84,7 @@ class MCAGroup(CollapsibleGroupBox):
         config_layout.setHorizontalSpacing(10)
         config_layout.setVerticalSpacing(8)
 
-        self.channels_edit = QLineEdit("1024")
+        self.channels_edit = QLineEdit("4096")
         self.vmin_edit = QLineEdit("0")
         self.vmax_edit = QLineEdit("5")
 
@@ -119,14 +122,20 @@ class MCAGroup(CollapsibleGroupBox):
         self.start_btn = QPushButton("Start MCA")
         self.stop_btn = QPushButton("Stop MCA")
         self.clear_btn = QPushButton("Clear MCA")
+        self.start_btn = QPushButton("Start MCA")
+        self.stop_btn = QPushButton("Stop MCA")
+        self.clear_btn = QPushButton("Clear MCA")
+        self.export_btn = QPushButton("Export TXT")
 
         self.start_btn.clicked.connect(self._start)
         self.stop_btn.clicked.connect(self._stop)
         self.clear_btn.clicked.connect(self._clear)
+        self.export_btn.clicked.connect(self._export_txt)
 
         run_layout.addWidget(self.start_btn, 2, 0)
         run_layout.addWidget(self.stop_btn, 2, 1)
-        run_layout.addWidget(self.clear_btn, 3, 0, 1, 2)
+        run_layout.addWidget(self.clear_btn, 3, 0)
+        run_layout.addWidget(self.export_btn, 3, 1)
 
         layout.addWidget(run_box)
 
@@ -143,6 +152,10 @@ class MCAGroup(CollapsibleGroupBox):
 
         self.summary_label = QLabel("")
         self.summary_label.setWordWrap(True)
+        self.summary_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Preferred,
+        )
         layout.addWidget(self.summary_label)
 
         return container
@@ -235,6 +248,9 @@ class MCAGroup(CollapsibleGroupBox):
 
         if self.clear_btn is not None:
             self.clear_btn.setEnabled(scope_ready and mca_configured and (not running))
+
+        if self.export_btn is not None:
+            self.export_btn.setEnabled(scope_ready and mca_configured and (not running))
 
     def _update_summary(self):
         cfg = self.controller.get_mca_config()
@@ -429,3 +445,54 @@ class MCAGroup(CollapsibleGroupBox):
             set_status_badge(self.status_label, "Ready", "blue")
 
         self._update_summary()
+
+    def _export_txt(self):
+        try:
+            data = self.controller.get_mca_export_data()
+
+            cfg = data.get("config")
+            summary = data.get("summary") or {}
+            spectrum = data.get("spectrum")
+
+            if cfg is None:
+                self._append_log("Export TXT error: MCA not configured.")
+                return
+
+            if spectrum is None:
+                self._append_log("Export TXT error: spectrum is empty.")
+                return
+
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save MCA spectrum as TXT",
+                "mca_spectrum.txt",
+                "Text files (*.txt);;All files (*)",
+            )
+            if not file_path:
+                return
+
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write("# MCA Spectrum Export\n\n")
+
+                f.write("[CONFIG]\n")
+                f.write(f"n_channels={cfg['n_channels']}\n")
+                f.write(f"voltage_min={cfg['voltage_min']}\n")
+                f.write(f"voltage_max={cfg['voltage_max']}\n")
+                f.write(f"baseline_width={cfg['baseline_width']}\n")
+                f.write(f"baseline_center_offset={cfg['baseline_center_offset']}\n")
+                f.write(f"trigger_index_estimate={cfg['trigger_index_estimate']}\n\n")
+
+                f.write("[SUMMARY]\n")
+                for key, value in summary.items():
+                    f.write(f"{key}={value}\n")
+                f.write("\n")
+
+                f.write("[SPECTRUM]\n")
+                f.write("channel\tcounts\n")
+                for i, counts in enumerate(spectrum):
+                    f.write(f"{i}\t{int(counts)}\n")
+
+            self._append_log(f"MCA TXT exported: {file_path}")
+
+        except Exception as e:
+            self._append_log(f"Export TXT error: {e}")

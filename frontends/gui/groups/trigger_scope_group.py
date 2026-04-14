@@ -62,8 +62,8 @@ class TriggerScopeGroup(CollapsibleGroupBox):
         row = 0
 
         grid.addWidget(QLabel("Trigger level [V]:"), row, 0)
-        self.trigger_level_edit = QLineEdit("0.2")
-        self.trigger_level_edit.setPlaceholderText("e.g. 0.2")
+        self.trigger_level_edit = QLineEdit("0.1")
+        self.trigger_level_edit.setPlaceholderText("e.g. 0.1")
         grid.addWidget(self.trigger_level_edit, row, 1)
         row += 1
 
@@ -86,14 +86,14 @@ class TriggerScopeGroup(CollapsibleGroupBox):
         row += 1
 
         grid.addWidget(QLabel("Sample rate [Hz]:"), row, 0)
-        self.sample_rate_edit = QLineEdit("6250000")
-        self.sample_rate_edit.setPlaceholderText("e.g. 6250000")
+        self.sample_rate_edit = QLineEdit("5000000")
+        self.sample_rate_edit.setPlaceholderText("e.g. 5000000")
         grid.addWidget(self.sample_rate_edit, row, 1)
         row += 1
 
         grid.addWidget(QLabel("Buffer size:"), row, 0)
-        self.buffer_size_edit = QLineEdit("512")
-        self.buffer_size_edit.setPlaceholderText("e.g. 512")
+        self.buffer_size_edit = QLineEdit("128")
+        self.buffer_size_edit.setPlaceholderText("e.g. 128")
         grid.addWidget(self.buffer_size_edit, row, 1)
         row += 1
 
@@ -110,14 +110,14 @@ class TriggerScopeGroup(CollapsibleGroupBox):
         row += 1
 
         grid.addWidget(QLabel("Pretrigger samples:"), row, 0)
-        self.pretrigger_edit = QLineEdit("256")
+        self.pretrigger_edit = QLineEdit("64")
         self.pretrigger_edit.setReadOnly(True)
         grid.addWidget(self.pretrigger_edit, row, 1)
         row += 1
 
         grid.addWidget(QLabel("Hold-off [s]:"), row, 0)
-        self.holdoff_edit = QLineEdit("0.00001")
-        self.holdoff_edit.setPlaceholderText("e.g. 1e-5")
+        self.holdoff_edit = QLineEdit("0.0")
+        self.holdoff_edit.setPlaceholderText("e.g. 0.0")
         grid.addWidget(self.holdoff_edit, row, 1)
         row += 1
 
