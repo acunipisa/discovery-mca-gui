@@ -1,0 +1,4 @@
+dwfpy
+matplotlib
+numpy
+plotly
