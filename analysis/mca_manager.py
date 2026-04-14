@@ -11,10 +11,17 @@ import ctypes
 from ctypes import wintypes
 
 
+import ctypes
+from ctypes import wintypes
+
+if not hasattr(wintypes, "DWORD_PTR"):
+    wintypes.DWORD_PTR = ctypes.c_size_t
+
+
 def _set_current_thread_high_priority():
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
-    THREAD_PRIORITY_HIGHEST = 2
+    THREAD_PRIORITY_TIME_CRITICAL = 15
 
     kernel32.GetCurrentThread.restype = wintypes.HANDLE
     kernel32.GetCurrentThread.argtypes = []
@@ -25,10 +32,21 @@ def _set_current_thread_high_priority():
         ctypes.c_int,
     ]
 
+    kernel32.SetThreadAffinityMask.restype = wintypes.DWORD_PTR
+    kernel32.SetThreadAffinityMask.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD_PTR,
+    ]
+
     hthread = kernel32.GetCurrentThread()
 
-    ok = kernel32.SetThreadPriority(hthread, THREAD_PRIORITY_HIGHEST)
+    ok = kernel32.SetThreadPriority(hthread, THREAD_PRIORITY_TIME_CRITICAL)
     if not ok:
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    affinity_mask = 4
+    prev_mask = kernel32.SetThreadAffinityMask(hthread, affinity_mask)
+    if prev_mask == 0:
         raise ctypes.WinError(ctypes.get_last_error())
 
 

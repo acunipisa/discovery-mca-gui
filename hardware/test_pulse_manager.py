@@ -2,7 +2,7 @@ from ctypes import *
 
 from hardware.dwfconstants import (
     AnalogOutNodeCarrier,
-    funcRampUp,
+    funcTriangle,
     funcPulse,
 )
 
@@ -12,7 +12,7 @@ def _ct_val(x):
 
 
 class TestPulseManager:
-    MODE_RAMP_UP = "ramp_up"
+    MODE_TRIANGLE = "triangle"
     MODE_PULSE = "pulse"
 
     def __init__(self, dwf_lib, hdwf, channel: int = 1):
@@ -47,8 +47,8 @@ class TestPulseManager:
         )
 
     def _set_function(self, mode: str):
-        if mode == self.MODE_RAMP_UP:
-            func = funcRampUp
+        if mode == self.MODE_TRIANGLE:
+            func = funcTriangle
         elif mode == self.MODE_PULSE:
             func = funcPulse
         else:
@@ -103,6 +103,10 @@ class TestPulseManager:
         phase_deg: float = 0.0,
     ):
         mode = str(mode).strip().lower()
+
+        if mode not in (self.MODE_TRIANGLE, self.MODE_PULSE):
+            raise ValueError(f"Unsupported waveform mode: {mode}")
+
         frequency_hz = self._validate_frequency(frequency_hz)
         amplitude_v = self._validate_amplitude(amplitude_v)
         offset_v = self._validate_offset(offset_v)
@@ -169,16 +173,16 @@ class TestPulseManager:
         self.symmetry_percent = symmetry_percent
         self.phase_deg = phase_deg
 
-    def configure_ramp_up(
+    def configure_triangle(
         self,
         frequency_hz: float = 100.0,
         amplitude_v: float = 1.0,
-        offset_v: float = -1.0,
-        symmetry_percent: float = 100.0,
+        offset_v: float = 0.0,
+        symmetry_percent: float = 0.0,
         phase_deg: float = 0.0,
     ):
         self.configure_waveform(
-            mode=self.MODE_RAMP_UP,
+            mode=self.MODE_TRIANGLE,
             frequency_hz=frequency_hz,
             amplitude_v=amplitude_v,
             offset_v=offset_v,
@@ -245,15 +249,15 @@ class TestPulseManager:
         )
         self.is_running = False
 
-    def start_ramp_up(
+    def start_triangle(
         self,
         frequency_hz: float = 100.0,
         amplitude_v: float = 1.0,
-        offset_v: float = -1.0,
-        symmetry_percent: float = 100.0,
+        offset_v: float = 0.0,
+        symmetry_percent: float = 0.0,
         phase_deg: float = 0.0,
     ):
-        self.configure_ramp_up(
+        self.configure_triangle(
             frequency_hz=frequency_hz,
             amplitude_v=amplitude_v,
             offset_v=offset_v,

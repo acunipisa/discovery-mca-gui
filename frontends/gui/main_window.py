@@ -56,9 +56,21 @@ class MainWindow(QMainWindow):
         self.scope_busy = False
         self.left_ratio_max = 0.25
         self._clamping_splitter = False
+        self._plot_refresh_suspended = False
+        self._plot_resume_timer = QTimer(self)
+        self._plot_resume_timer.setSingleShot(True)
+        self._plot_resume_timer.timeout.connect(self._resume_plot_refresh)
 
         self._build_ui()
         self.refresh_all_groups()
+        self.refresh_plot_panel()
+
+    def _suspend_plot_refresh_temporarily(self, delay_ms: int = 250):
+        self._plot_refresh_suspended = True
+        self._plot_resume_timer.start(delay_ms)
+
+    def _resume_plot_refresh(self):
+        self._plot_refresh_suspended = False
         self.refresh_plot_panel()
 
     def is_scope_busy(self) -> bool:
@@ -110,6 +122,7 @@ class MainWindow(QMainWindow):
         if self.root_splitter is None:
             return
 
+        self._suspend_plot_refresh_temporarily()
         self._apply_root_splitter_limits()
 
     def _recommended_initial_left_width(self) -> int:
@@ -184,6 +197,8 @@ class MainWindow(QMainWindow):
     def _on_root_splitter_moved(self, pos: int, index: int):
         if self._clamping_splitter:
             return
+
+        self._suspend_plot_refresh_temporarily()
         self._apply_root_splitter_limits()
 
     def _build_left_panel(self) -> QWidget:
@@ -313,6 +328,10 @@ class MainWindow(QMainWindow):
     def refresh_plot_panel(self):
         if self.plot_panel is None:
             return
+
+        if self._plot_refresh_suspended:
+            return
+
         self.plot_panel.refresh_plot_panel()
 
     def is_polling_active(self) -> bool:
@@ -362,7 +381,9 @@ class MainWindow(QMainWindow):
                 return
 
             self.refresh_all_groups()
-            self.refresh_plot_panel()
+
+            if not self._plot_refresh_suspended:
+                self.refresh_plot_panel()
         except Exception as e:
             self._append_log(f"Polling refresh error: {e}")
 

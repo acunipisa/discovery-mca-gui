@@ -385,22 +385,6 @@ class DiscoveryMCAController:
             has_test_pulse_manager=self.test_pulse is not None,
         )
 
-    def start_test_pulse_ramp(
-        self,
-        frequency_hz: float = 100.0,
-        amplitude_v: float = 1.0,
-        offset_v: float = -1.0,
-        symmetry_percent: float = 100.0,
-        phase_deg: float = 0.0,
-    ):
-        self._require_test_pulse().start_ramp_up(
-            frequency_hz=frequency_hz,
-            amplitude_v=amplitude_v,
-            offset_v=offset_v,
-            symmetry_percent=symmetry_percent,
-            phase_deg=phase_deg,
-        )
-
     def stop_test_pulse(self, force_zero: bool = False):
         self._require_test_pulse().stop(force_zero=force_zero)
 
@@ -410,19 +394,18 @@ class DiscoveryMCAController:
         frequency_hz: float,
         amplitude_v: float,
         offset_v: float,
-        symmetry_percent: float,
+        shape_percent: float,
         phase_deg: float = 0.0,
     ):
         tp = self._require_test_pulse()
-
         mode = str(mode).strip().lower()
 
-        if mode == "ramp_up":
-            tp.start_ramp_up(
+        if mode == "triangle":
+            tp.start_triangle(
                 frequency_hz=frequency_hz,
                 amplitude_v=amplitude_v,
                 offset_v=offset_v,
-                symmetry_percent=symmetry_percent,
+                symmetry_percent=shape_percent,
                 phase_deg=phase_deg,
             )
             return
@@ -432,7 +415,7 @@ class DiscoveryMCAController:
                 frequency_hz=frequency_hz,
                 amplitude_v=amplitude_v,
                 offset_v=offset_v,
-                duty_cycle_percent=symmetry_percent,
+                duty_cycle_percent=shape_percent,
                 phase_deg=phase_deg,
             )
             return

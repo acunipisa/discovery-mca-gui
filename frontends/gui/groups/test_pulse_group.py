@@ -23,8 +23,8 @@ class TestPulseGroup(CollapsibleGroupBox):
         self.frequency_edit = None
         self.amplitude_edit = None
         self.offset_edit = None
-        self.symmetry_label = None
-        self.symmetry_edit = None
+        self.shape_label = None
+        self.shape_edit = None
         self.phase_edit = None
 
         self.start_btn = None
@@ -38,6 +38,7 @@ class TestPulseGroup(CollapsibleGroupBox):
 
         self._connect_signals()
         self.refresh_ui_enabled_state()
+        self._on_mode_changed()
         self.refresh_passive()
 
     def _build_content(self) -> QWidget:
@@ -57,13 +58,13 @@ class TestPulseGroup(CollapsibleGroupBox):
 
         grid.addWidget(QLabel("Mode:"), row, 0)
         self.mode_combo = QComboBox()
-        self.mode_combo.addItem("Ramp Up", "ramp_up")
+        self.mode_combo.addItem("Triangle", "triangle")
         self.mode_combo.addItem("Pulse", "pulse")
         grid.addWidget(self.mode_combo, row, 1)
         row += 1
 
         grid.addWidget(QLabel("Frequency [Hz]:"), row, 0)
-        self.frequency_edit = QLineEdit("1000")
+        self.frequency_edit = QLineEdit("100")
         grid.addWidget(self.frequency_edit, row, 1)
         row += 1
 
@@ -77,10 +78,10 @@ class TestPulseGroup(CollapsibleGroupBox):
         grid.addWidget(self.offset_edit, row, 1)
         row += 1
 
-        self.symmetry_label = QLabel("Symmetry [%]:")
-        grid.addWidget(self.symmetry_label, row, 0)
-        self.symmetry_edit = QLineEdit("100.0")
-        grid.addWidget(self.symmetry_edit, row, 1)
+        self.shape_label = QLabel("Symmetry [%]:")
+        grid.addWidget(self.shape_label, row, 0)
+        self.shape_edit = QLineEdit("0.0")
+        grid.addWidget(self.shape_edit, row, 1)
         row += 1
 
         grid.addWidget(QLabel("Phase [deg]:"), row, 0)
@@ -129,14 +130,13 @@ class TestPulseGroup(CollapsibleGroupBox):
 
     def _on_mode_changed(self):
         mode = self.mode_combo.currentData()
+
         if mode == "pulse":
-            self.symmetry_label.setText("Duty cycle [%]:")
-            if not self.symmetry_edit.text().strip():
-                self.symmetry_edit.setText("1.0")
+            self.shape_label.setText("Duty cycle [%]:")
+            self.shape_edit.setText("0.1")
         else:
-            self.symmetry_label.setText("Symmetry [%]:")
-            if not self.symmetry_edit.text().strip():
-                self.symmetry_edit.setText("100.0")
+            self.shape_label.setText("Symmetry [%]:")
+            self.shape_edit.setText("0.0")
 
     def _read_form_values(self) -> dict:
         return {
@@ -144,7 +144,7 @@ class TestPulseGroup(CollapsibleGroupBox):
             "frequency_hz": float(self.frequency_edit.text().strip()),
             "amplitude_v": float(self.amplitude_edit.text().strip()),
             "offset_v": float(self.offset_edit.text().strip()),
-            "symmetry_percent": float(self.symmetry_edit.text().strip()),
+            "shape_percent": float(self.shape_edit.text().strip()),
             "phase_deg": float(self.phase_edit.text().strip()),
         }
 
@@ -157,7 +157,7 @@ class TestPulseGroup(CollapsibleGroupBox):
             self.frequency_edit,
             self.amplitude_edit,
             self.offset_edit,
-            self.symmetry_edit,
+            self.shape_edit,
             self.phase_edit,
             self.start_btn,
             self.stop_btn,
@@ -192,14 +192,14 @@ class TestPulseGroup(CollapsibleGroupBox):
         freq = summary["frequency_hz"]
         amp = summary["amplitude_v"]
         offset = summary["offset_v"]
-        sym = summary["symmetry_percent"]
+        shape = summary["symmetry_percent"]
         phase = summary["phase_deg"]
 
         if freq is None:
             self.summary_label.setText("No test pulse configuration applied yet.")
             return
 
-        sym_name = "Duty" if mode == "pulse" else "Symmetry"
+        shape_name = "Duty" if mode == "pulse" else "Symmetry"
 
         self.summary_label.setText(
             "Configured: "
@@ -207,24 +207,25 @@ class TestPulseGroup(CollapsibleGroupBox):
             f"f={freq:.6g} Hz, "
             f"amp={amp:.6g} V, "
             f"offset={offset:.6g} V, "
-            f"{sym_name.lower()}={sym:.6g} %, "
+            f"{shape_name.lower()}={shape:.6g} %, "
             f"phase={phase:.6g} deg"
         )
 
     def _start(self):
         try:
             params = self._read_form_values()
+
             self.controller.start_test_pulse(
                 mode=params["mode"],
                 frequency_hz=params["frequency_hz"],
                 amplitude_v=params["amplitude_v"],
                 offset_v=params["offset_v"],
-                symmetry_percent=params["symmetry_percent"],
+                shape_percent=params["shape_percent"],
                 phase_deg=params["phase_deg"],
             )
 
             mode = params["mode"]
-            sym_name = "duty" if mode == "pulse" else "symmetry"
+            shape_name = "duty" if mode == "pulse" else "symmetry"
 
             self._append_log(
                 "Test pulse started: "
@@ -232,7 +233,7 @@ class TestPulseGroup(CollapsibleGroupBox):
                 f"f={params['frequency_hz']:.6g} Hz, "
                 f"amp={params['amplitude_v']:.6g} V, "
                 f"offset={params['offset_v']:.6g} V, "
-                f"{sym_name}={params['symmetry_percent']:.6g} %, "
+                f"{shape_name}={params['shape_percent']:.6g} %, "
                 f"phase={params['phase_deg']:.6g} deg."
             )
 

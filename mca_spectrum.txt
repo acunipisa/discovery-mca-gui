@@ -12,19 +12,19 @@ trigger_index_estimate=64
 n_channels=4096
 voltage_min=0.0
 voltage_max=5.0
-event_count=14745
-accepted_count=14745
+event_count=499950
+accepted_count=499950
 rejected_count=0
 overflow_count=0
 underflow_count=0
-elapsed_time_s=15.28860092163086
-accepted_rate_cps=964.444037461809
-dead_time_instant_percent=2.913362760650176
-dead_time_average_percent=3.175727605765865
-total_counts_in_spectrum=14745
-arm_count=1
-triggered_read_count=14745
-processed_count=14745
+elapsed_time_s=521.0562574863434
+accepted_rate_cps=959.4933230661824
+dead_time_instant_percent=3.501774155589334
+dead_time_average_percent=3.4073005760374344
+total_counts_in_spectrum=499950
+arm_count=2
+triggered_read_count=499950
+processed_count=499950
 dropped_buffers=0
 
 [SPECTRUM]
@@ -852,10 +852,10 @@ channel	counts
 820	0
 821	0
 822	0
-823	452
-824	13483
-825	810
-826	0
+823	272
+824	320878
+825	178440
+826	360
 827	0
 828	0
 829	0

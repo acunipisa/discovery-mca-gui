@@ -239,7 +239,7 @@ class PlotPanel(QWidget):
             if spectrum is None or len(spectrum) == 0:
                 self.plot_info_label.setText("No MCA spectrum available.")
                 self._style_plot_axes()
-                self.canvas.draw()
+                self.canvas.draw_idle()
                 if self.toolbar is not None:
                     self.toolbar.update()
                 return
@@ -272,7 +272,7 @@ class PlotPanel(QWidget):
                 f"AverageDeadTime={summary['dead_time_average_percent']:.1f}%"
             )
 
-            self.canvas.draw()
+            self.canvas.draw_idle()
             if self.toolbar is not None:
                 self.toolbar.update()
             return
@@ -287,7 +287,7 @@ class PlotPanel(QWidget):
         if buffer is None or result is None:
             self.plot_info_label.setText("No captured pulse.")
             self._style_plot_axes()
-            self.canvas.draw()
+            self.canvas.draw_idle()
             if self.toolbar is not None:
                 self.toolbar.update()
             return
@@ -330,7 +330,7 @@ class PlotPanel(QWidget):
             f"BaselineWindow=[{result.baseline_start}:{result.baseline_end}]"
         )
 
-        self.canvas.draw()
+        self.canvas.draw_idle()
         if self.toolbar is not None:
             self.toolbar.update()
 
@@ -377,7 +377,7 @@ class PlotPanel(QWidget):
             self.ax.set_xlim(new_xlim)
             self.ax.set_ylim(new_ylim)
 
-        self.canvas.draw()
+        self.canvas.draw_idle()
         if self.toolbar is not None:
             self.toolbar.update()
 
